@@ -1,60 +1,52 @@
-import Parser from "rss-parser";
+import OpenAI from "openai";
+import { unstable_cache } from "next/cache";
 
-const parser = new Parser({
-  timeout: 12000,
-  headers: {
-    "User-Agent": "ai-feed-app/1.0",
-  },
-});
+export const runtime = "nodejs";
+
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
 const RSS_SOURCES = [
   {
     name: "MarkTechPost",
-    type: "rss",
+    type: "news",
     url: "https://www.marktechpost.com/feed/",
-    category: "news",
   },
   {
     name: "arXiv cs.AI",
-    type: "rss",
+    type: "paper",
     url: "https://rss.arxiv.org/rss/cs.AI",
-    category: "paper",
   },
   {
     name: "arXiv cs.CL",
-    type: "rss",
+    type: "paper",
     url: "https://rss.arxiv.org/rss/cs.CL",
-    category: "paper",
   },
   {
     name: "arXiv cs.LG",
-    type: "rss",
+    type: "paper",
     url: "https://rss.arxiv.org/rss/cs.LG",
-    category: "paper",
   },
   {
     name: "OpenAI News",
-    type: "rss",
+    type: "official",
     url: "https://openai.com/news/rss.xml",
-    category: "official",
   },
   {
     name: "Google DeepMind",
-    type: "rss",
+    type: "official",
     url: "https://deepmind.google/blog/rss.xml",
-    category: "official",
   },
   {
     name: "Hugging Face Blog",
-    type: "rss",
+    type: "official",
     url: "https://huggingface.co/blog/feed.xml",
-    category: "official",
   },
   {
     name: "MIT News AI",
-    type: "rss",
+    type: "research",
     url: "https://news.mit.edu/rss/topic/artificial-intelligence2",
-    category: "research",
   },
 ];
 
@@ -85,14 +77,26 @@ const GITHUB_REPOS = [
   },
 ];
 
+function decodeXmlEntities(text = "") {
+  return text
+    .replace(/<!\[CDATA\[(.*?)\]\]>/gs, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
 function stripHtml(text = "") {
-  return text.replace(/<[^>]*>/g, " ");
+  return decodeXmlEntities(text).replace(/<[^>]*>/g, " ");
 }
 
 function cleanSummary(text = "") {
   if (!text) return "Sem resumo disponível.";
 
-  let plain = stripHtml(text).replace(/\s+/g, " ").trim();
+  let plain = stripHtml(text)
+    .replace(/\s+/g, " ")
+    .trim();
 
   plain = plain
     .replace(/arXiv:\d+\.\d+v\d+/gi, "")
@@ -104,56 +108,9 @@ function cleanSummary(text = "") {
 
   if (!plain) return "Sem resumo disponível.";
 
-  return plain.length > 140 ? `${plain.slice(0, 137).trim()}...` : plain;
-}
-
-function translateTitle(title = "") {
-  const dictionary = [
-    ["introducing", "apresentando"],
-    ["introduces", "apresenta"],
-    ["introduced", "apresentado"],
-    ["launches", "lança"],
-    ["launch", "lançamento"],
-    ["releases", "libera"],
-    ["released", "liberado"],
-    ["release", "lançamento"],
-    ["announces", "anuncia"],
-    ["announced", "anunciado"],
-    ["announcement", "anúncio"],
-    ["new", "novo"],
-    ["open-source", "código aberto"],
-    ["open source", "código aberto"],
-    ["state-of-the-art", "estado da arte"],
-    ["model", "modelo"],
-    ["models", "modelos"],
-    ["paper", "artigo"],
-    ["papers", "artigos"],
-    ["research", "pesquisa"],
-    ["benchmark", "benchmark"],
-    ["benchmarks", "benchmarks"],
-    ["agent", "agente"],
-    ["agents", "agentes"],
-    ["dataset", "dataset"],
-    ["datasets", "datasets"],
-    ["training", "treinamento"],
-    ["reasoning", "raciocínio"],
-    ["multimodal", "multimodal"],
-    ["developer", "desenvolvedor"],
-    ["developers", "desenvolvedores"],
-    ["update", "atualização"],
-    ["updates", "atualizações"],
-    ["github", "GitHub"],
-    ["ai", "IA"],
-    ["llm", "LLM"],
-  ];
-
-  let translated = title;
-
-  for (const [en, pt] of dictionary) {
-    translated = translated.replace(new RegExp(`\\b${en}\\b`, "gi"), pt);
-  }
-
-  return translated;
+  return plain.length > 140
+    ? `${plain.slice(0, 137).trim()}...`
+    : plain;
 }
 
 function normalizeDate(value) {
@@ -170,39 +127,134 @@ function makeId(...parts) {
     .slice(0, 180);
 }
 
-async function fetchRssSource(source, failedSources) {
-  let feed;
+function extractTag(block, tagName) {
+  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i");
+  const match = block.match(regex);
+  return match ? decodeXmlEntities(match[1].trim()) : "";
+}
+
+function extractAllItems(xml = "") {
+  const itemMatches = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((m) => m[0]);
+  if (itemMatches.length > 0) {
+    return itemMatches.map((raw, index) => ({
+      id: extractTag(raw, "guid") || extractTag(raw, "link") || `rss-item-${index}`,
+      title: extractTag(raw, "title"),
+      link: extractTag(raw, "link"),
+      summary:
+        extractTag(raw, "description") ||
+        extractTag(raw, "content:encoded") ||
+        extractTag(raw, "summary"),
+      publishedAt: extractTag(raw, "pubDate") || extractTag(raw, "dc:date"),
+    }));
+  }
+
+  const entryMatches = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].map((m) => m[0]);
+  return entryMatches.map((raw, index) => {
+    const linkMatch = raw.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
+    return {
+      id:
+        extractTag(raw, "id") ||
+        (linkMatch ? linkMatch[1] : "") ||
+        `atom-entry-${index}`,
+      title: extractTag(raw, "title"),
+      link: linkMatch ? decodeXmlEntities(linkMatch[1]) : "",
+      summary:
+        extractTag(raw, "summary") ||
+        extractTag(raw, "content") ||
+        extractTag(raw, "description"),
+      publishedAt:
+        extractTag(raw, "updated") ||
+        extractTag(raw, "published") ||
+        extractTag(raw, "pubDate"),
+    };
+  });
+}
+
+async function translateTitleRaw(title) {
+  if (!title || !openai) return title;
 
   try {
-    feed = await parser.parseURL(source.url);
-  } catch (error) {
+    const response = await openai.responses.create({
+      model: "gpt-5-mini",
+      input: [
+        {
+          role: "system",
+          content:
+            "Traduza títulos de notícias e artigos técnicos de IA para português do Brasil. " +
+            "Mantenha siglas e termos técnicos quando fizer sentido, como LLM, benchmark, dataset, transformer, agent, API, GitHub. " +
+            "Responda apenas com a tradução final, sem aspas, sem explicações.",
+        },
+        {
+          role: "user",
+          content: title,
+        },
+      ],
+      temperature: 0,
+      max_output_tokens: 80,
+    });
+
+    const translated = response.output_text?.trim();
+    return translated || title;
+  } catch {
+    return title;
+  }
+}
+
+const getCachedTranslation = unstable_cache(
+  async (title) => translateTitleRaw(title),
+  ["feed-title-translation-v1"],
+  { revalidate: 60 * 60 * 24 * 30 } // 30 dias
+);
+
+async function translateTitle(title = "") {
+  if (!title) return "";
+  try {
+    return await getCachedTranslation(title);
+  } catch {
+    return title;
+  }
+}
+
+async function fetchRssSource(source, failedSources) {
+  try {
+    const response = await fetch(source.url, {
+      next: { revalidate: 60 * 30 },
+      headers: {
+        "User-Agent": "ai-feed-app/1.0",
+        Accept: "application/rss+xml, application/atom+xml, text/xml, application/xml;q=0.9, */*;q=0.8",
+      },
+    });
+
+    if (!response.ok) {
+      failedSources.push(source.name);
+      return [];
+    }
+
+    const xml = await response.text();
+    const rawItems = extractAllItems(xml);
+
+    const items = await Promise.all(
+      rawItems.slice(0, 12).map(async (entry, index) => {
+        const title = entry.title || "Sem título";
+
+        return {
+          id: makeId(source.name, entry.id || entry.link || index),
+          title,
+          translatedTitle: await translateTitle(title),
+          summary: cleanSummary(entry.summary || ""),
+          url: entry.link || "",
+          source: source.name,
+          type: source.type,
+          publishedAt: normalizeDate(entry.publishedAt),
+        };
+      })
+    );
+
+    return items.filter((item) => item.url);
+  } catch {
     failedSources.push(source.name);
     return [];
   }
-
-  const items = (feed.items || []).map((entry, index) => {
-    const title = entry.title || "Sem título";
-    const summary = cleanSummary(
-      entry.summary ||
-        entry.contentSnippet ||
-        entry.content ||
-        entry["content:encoded"] ||
-        ""
-    );
-
-    return {
-      id: makeId(source.name, entry.guid || entry.id || entry.link || index),
-      title,
-      translatedTitle: translateTitle(title),
-      summary,
-      url: entry.link || "",
-      source: source.name,
-      type: source.category || source.type || "rss",
-      publishedAt: normalizeDate(entry.isoDate || entry.pubDate),
-    };
-  });
-
-  return items.filter((item) => item.url);
 }
 
 async function fetchGithubRepo(repo, failedSources) {
@@ -217,7 +269,7 @@ async function fetchGithubRepo(repo, failedSources) {
           ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
           : {}),
       },
-      next: { revalidate: 1800 },
+      next: { revalidate: 60 * 30 },
     });
 
     if (!response.ok) {
@@ -249,7 +301,7 @@ async function fetchGithubRepo(repo, failedSources) {
         publishedAt: normalizeDate(data.updated_at || data.pushed_at || data.created_at),
       },
     ];
-  } catch (error) {
+  } catch {
     failedSources.push(`GitHub: ${repo.label}`);
     return [];
   }
@@ -284,9 +336,10 @@ export async function GET() {
       meta: {
         total: items.length,
         generatedAt: new Date().toISOString(),
+        translation: openai ? "openai+cache" : "fallback-original-title",
       },
     });
-  } catch (error) {
+  } catch {
     return Response.json(
       {
         ok: false,
