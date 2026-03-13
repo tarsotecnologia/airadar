@@ -181,8 +181,12 @@ export default function HomePage() {
               <span className="badge">{item.kind}</span>
               <span className="muted">{relativeDate(item.publishedAt)}</span>
             </div>
-            <h3>{item.title}</h3>
-            <p>{item.summary || 'Sem resumo. O item preferiu o mistério.'}</p>
+            <h3 title={item.translatedTitle || item.title}>
+              {item.translatedTitle || item.title}
+            </h3>
+            <p className="summary clamp-2">
+            {item.summary}
+          </p>
             <div className="card-meta">
               <div>
                 <strong>{item.source}</strong>

@@ -67,7 +67,7 @@ async function fetchRssFeed(source) {
     .slice(0, 12)
     .map((item, index) => ({
       id: `${source.id}-${index}-${item.link}`,
-      title: item.title,
+      translatedTitle: translateTitle(item.title || ""),
       url: item.link,
       summary: item.summary,
       publishedAt: item.publishedAt,
@@ -109,7 +109,7 @@ async function fetchGithubRepo(repoDef) {
     if (Array.isArray(releases) && releases.length > 0) {
       const release = releases[0]
       latestActivity = {
-        title: release.name || release.tag_name || `Release em ${repoDef.name}`,
+        translatedTitle: translateTitle(item.title || ""),
         url: release.html_url,
         summary: release.body ? decodeHtml(release.body).slice(0, 240) : repoDef.description,
         publishedAt: parseDate(release.published_at || release.created_at),
@@ -202,4 +202,45 @@ export async function GET() {
       }
     }
   )
+}
+
+function translateTitle(title = "") {
+  const dictionary = [
+    ["introduces", "apresenta"],
+    ["introducing", "apresentando"],
+    ["launches", "lança"],
+    ["launch", "lançamento"],
+    ["releases", "libera"],
+    ["release", "lançamento"],
+    ["announces", "anuncia"],
+    ["announcement", "anúncio"],
+    ["new", "novo"],
+    ["open-source", "código aberto"],
+    ["open source", "código aberto"],
+    ["model", "modelo"],
+    ["models", "modelos"],
+    ["paper", "artigo"],
+    ["research", "pesquisa"],
+    ["benchmark", "benchmark"],
+    ["benchmarks", "benchmarks"],
+    ["agent", "agente"],
+    ["agents", "agentes"],
+    ["dataset", "dataset"],
+    ["training", "treinamento"],
+    ["reasoning", "raciocínio"],
+    ["multimodal", "multimodal"],
+    ["developer", "desenvolvedor"],
+    ["developers", "desenvolvedores"],
+    ["github", "GitHub"],
+    ["ai", "IA"],
+    ["llm", "LLM"],
+  ];
+
+  let translated = title;
+
+  for (const [en, pt] of dictionary) {
+    translated = translated.replace(new RegExp(`\\b${en}\\b`, "gi"), pt);
+  }
+
+  return translated;
 }
