@@ -1,244 +1,147 @@
-import { githubRepos, rssSources } from '@/lib/sources'
+import Parser from "rss-parser";
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-
-function decodeHtml(value = '') {
-  return value
-    .replace(/<!\[CDATA\[(.*?)\]\]>/gs, '$1')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function parseDate(value) {
-  const date = value ? new Date(value) : null
-  return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null
-}
-
-function extractTag(xml, tag) {
-  const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\/${tag}>`, 'i'))
-  return match ? decodeHtml(match[1]) : ''
-}
-
-function extractItems(xml) {
-  const itemMatches = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((m) => m[0])
-  if (itemMatches.length) {
-    return itemMatches.map((item) => ({
-      title: extractTag(item, 'title'),
-      link: extractTag(item, 'link'),
-      summary: extractTag(item, 'description'),
-      publishedAt: parseDate(extractTag(item, 'pubDate') || extractTag(item, 'dc:date'))
-    }))
-  }
-
-  const entryMatches = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].map((m) => m[0])
-  return entryMatches.map((entry) => {
-    const linkMatch = entry.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?/i)
-    return {
-      title: extractTag(entry, 'title'),
-      link: linkMatch ? decodeHtml(linkMatch[1]) : '',
-      summary: extractTag(entry, 'summary') || extractTag(entry, 'content'),
-      publishedAt: parseDate(extractTag(entry, 'updated') || extractTag(entry, 'published'))
-    }
-  })
-}
-
-async function fetchRssFeed(source) {
-  const response = await fetch(source.url, {
-    headers: {
-      'User-Agent': 'Radar-IA/1.0'
-    },
-    next: { revalidate: 1800 }
-  })
-
-  if (!response.ok) {
-    throw new Error(`Falha ao buscar ${source.name}`)
-  }
-
-  const xml = await response.text()
-  const items = (feed.items || []).map((entry) => {
-  const id = entry.id || entry.link || Math.random().toString(36);
-
-  return {
-    id,
-    title: entry.title || "Sem título",
-    translatedTitle: translateTitle(entry.title || ""),
-    summary: cleanSummary(
-      entry.summary ||
-      entry.contentSnippet ||
-      entry.content ||
-      ""
-    ),
-    url: entry.link || entry.url || "",
-    source: source.name,
-    type: source.type,
-    publishedAt:
-      entry.isoDate ||
-      entry.pubDate ||
-      new Date().toISOString(),
-  };
+const parser = new Parser({
+  timeout: 12000,
+  headers: {
+    "User-Agent": "ai-feed-app/1.0",
+  },
 });
-  return items
+
+const RSS_SOURCES = [
+  {
+    name: "MarkTechPost",
+    type: "rss",
+    url: "https://www.marktechpost.com/feed/",
+    category: "news",
+  },
+  {
+    name: "arXiv cs.AI",
+    type: "rss",
+    url: "https://rss.arxiv.org/rss/cs.AI",
+    category: "paper",
+  },
+  {
+    name: "arXiv cs.CL",
+    type: "rss",
+    url: "https://rss.arxiv.org/rss/cs.CL",
+    category: "paper",
+  },
+  {
+    name: "arXiv cs.LG",
+    type: "rss",
+    url: "https://rss.arxiv.org/rss/cs.LG",
+    category: "paper",
+  },
+  {
+    name: "OpenAI News",
+    type: "rss",
+    url: "https://openai.com/news/rss.xml",
+    category: "official",
+  },
+  {
+    name: "Google DeepMind",
+    type: "rss",
+    url: "https://deepmind.google/blog/rss.xml",
+    category: "official",
+  },
+  {
+    name: "Hugging Face Blog",
+    type: "rss",
+    url: "https://huggingface.co/blog/feed.xml",
+    category: "official",
+  },
+  {
+    name: "MIT News AI",
+    type: "rss",
+    url: "https://news.mit.edu/rss/topic/artificial-intelligence2",
+    category: "research",
+  },
+];
+
+const GITHUB_REPOS = [
+  {
+    owner: "Hannibal046",
+    repo: "Awesome-LLM",
+    label: "Awesome-LLM",
+    category: "github",
+  },
+  {
+    owner: "KylinC",
+    repo: "Awesome-Awesome-LLM",
+    label: "Awesome-Awesome-LLM",
+    category: "github",
+  },
+  {
+    owner: "Shubhamsaboo",
+    repo: "awesome-llm-apps",
+    label: "awesome-llm-apps",
+    category: "github",
+  },
+  {
+    owner: "huggingface",
+    repo: "transformers",
+    label: "transformers",
+    category: "github",
+  },
+];
+
+function stripHtml(text = "") {
+  return text.replace(/<[^>]*>/g, " ");
 }
 
-async function fetchGithubRepo(repoDef) {
-  const response = await fetch(`https://api.github.com/repos/${repoDef.repo}`, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'Radar-IA/1.0'
-    },
-    next: { revalidate: 1800 }
-  })
+function cleanSummary(text = "") {
+  if (!text) return "Sem resumo disponível.";
 
-  if (!response.ok) {
-    throw new Error(`Falha ao buscar ${repoDef.repo}`)
-  }
+  let plain = stripHtml(text).replace(/\s+/g, " ").trim();
 
-  const repo = await response.json()
+  plain = plain
+    .replace(/arXiv:\d+\.\d+v\d+/gi, "")
+    .replace(/Announce Type:\s*\w+/gi, "")
+    .replace(/Abstract:\s*/gi, "")
+    .replace(/^by\s+.+?\s+-\s+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  let latestActivity = null
+  if (!plain) return "Sem resumo disponível.";
 
-  const releasesResponse = await fetch(`https://api.github.com/repos/${repoDef.repo}/releases?per_page=1`, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'Radar-IA/1.0'
-    },
-    next: { revalidate: 1800 }
-  })
-
-  if (releasesResponse.ok) {
-    const releases = await releasesResponse.json()
-    if (Array.isArray(releases) && releases.length > 0) {
-      const release = releases[0]
-      latestActivity = {
-        translatedTitle: translateTitle(item.title || ""),
-        url: release.html_url,
-        summary: release.body ? decodeHtml(release.body).slice(0, 240) : repoDef.description,
-        publishedAt: parseDate(release.published_at || release.created_at),
-        activityType: 'release'
-      }
-    }
-  }
-
-  if (!latestActivity) {
-    const commitsResponse = await fetch(`https://api.github.com/repos/${repoDef.repo}/commits?per_page=1`, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'Radar-IA/1.0'
-      },
-      next: { revalidate: 1800 }
-    })
-
-    if (commitsResponse.ok) {
-      const commits = await commitsResponse.json()
-      if (Array.isArray(commits) && commits.length > 0) {
-        const commit = commits[0]
-        latestActivity = {
-          title: commit.commit?.message?.split('\n')[0] || `Atualização em ${repoDef.name}`,
-          url: commit.html_url,
-          summary: repoDef.description,
-          publishedAt: parseDate(commit.commit?.author?.date),
-          activityType: 'commit'
-        }
-      }
-    }
-  }
-
-  return {
-    id: `github-${repoDef.id}`,
-    title: latestActivity?.title || repo.full_name,
-    url: latestActivity?.url || repo.html_url,
-    summary: latestActivity?.cleanSummary(summary) || repo.description || repoDef.description,
-    publishedAt: latestActivity?.publishedAt || parseDate(repo.updated_at),
-    source: repo.full_name,
-    kind: 'repositório GitHub',
-    stars: repo.stargazers_count,
-    repoUrl: repo.html_url,
-    activityType: latestActivity?.activityType || 'repo',
-    type: 'github'
-  }
-}
-
-function normalize(items) {
-  return items
-    .filter(Boolean)
-    .sort((a, b) => {
-      const ad = a.publishedAt ? new Date(a.publishedAt).getTime() : 0
-      const bd = b.publishedAt ? new Date(b.publishedAt).getTime() : 0
-      return bd - ad
-    })
-}
-
-export async function GET() {
-  const results = await Promise.allSettled([
-    ...rssSources.map(fetchRssFeed),
-    ...githubRepos.map(fetchGithubRepo)
-  ])
-
-  const feed = []
-  const errors = []
-
-  results.forEach((result) => {
-    if (result.status === 'fulfilled') {
-      if (Array.isArray(result.value)) {
-        feed.push(...result.value)
-      } else {
-        feed.push(result.value)
-      }
-    } else {
-      errors.push(result.reason?.message || 'Erro desconhecido')
-    }
-  })
-
-  return Response.json(
-    {
-      updatedAt: new Date().toISOString(),
-      sources: rssSources,
-      githubRepos,
-      errors,
-      items: normalize(feed).slice(0, 80)
-    },
-    {
-      headers: {
-        'Cache-Control': 's-maxage=1800, stale-while-revalidate=3600'
-      }
-    }
-  )
+  return plain.length > 140 ? `${plain.slice(0, 137).trim()}...` : plain;
 }
 
 function translateTitle(title = "") {
   const dictionary = [
-    ["introduces", "apresenta"],
     ["introducing", "apresentando"],
+    ["introduces", "apresenta"],
+    ["introduced", "apresentado"],
     ["launches", "lança"],
     ["launch", "lançamento"],
     ["releases", "libera"],
+    ["released", "liberado"],
     ["release", "lançamento"],
     ["announces", "anuncia"],
+    ["announced", "anunciado"],
     ["announcement", "anúncio"],
     ["new", "novo"],
     ["open-source", "código aberto"],
     ["open source", "código aberto"],
+    ["state-of-the-art", "estado da arte"],
     ["model", "modelo"],
     ["models", "modelos"],
     ["paper", "artigo"],
+    ["papers", "artigos"],
     ["research", "pesquisa"],
     ["benchmark", "benchmark"],
     ["benchmarks", "benchmarks"],
     ["agent", "agente"],
     ["agents", "agentes"],
     ["dataset", "dataset"],
+    ["datasets", "datasets"],
     ["training", "treinamento"],
     ["reasoning", "raciocínio"],
     ["multimodal", "multimodal"],
     ["developer", "desenvolvedor"],
     ["developers", "desenvolvedores"],
+    ["update", "atualização"],
+    ["updates", "atualizações"],
     ["github", "GitHub"],
     ["ai", "IA"],
     ["llm", "LLM"],
@@ -253,24 +156,145 @@ function translateTitle(title = "") {
   return translated;
 }
 
+function normalizeDate(value) {
+  if (!value) return new Date().toISOString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
 
-function cleanSummary(text = "") {
-  if (!text) return "Sem resumo disponível.";
+function makeId(...parts) {
+  return parts
+    .filter(Boolean)
+    .join("-")
+    .replace(/[^a-zA-Z0-9-_:.]/g, "")
+    .slice(0, 180);
+}
 
-  let plain = text
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+async function fetchRssSource(source, failedSources) {
+  let feed;
 
-  // remove prefixos comuns do arXiv
-  plain = plain
-    .replace(/arXiv:\d+\.\d+v\d+/gi, "")
-    .replace(/Announce Type:\s*\w+/gi, "")
-    .replace(/Abstract:\s*/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  try {
+    feed = await parser.parseURL(source.url);
+  } catch (error) {
+    failedSources.push(source.name);
+    return [];
+  }
 
-  return plain.length > 140
-    ? `${plain.slice(0, 137).trim()}...`
-    : plain;
+  const items = (feed.items || []).map((entry, index) => {
+    const title = entry.title || "Sem título";
+    const summary = cleanSummary(
+      entry.summary ||
+        entry.contentSnippet ||
+        entry.content ||
+        entry["content:encoded"] ||
+        ""
+    );
+
+    return {
+      id: makeId(source.name, entry.guid || entry.id || entry.link || index),
+      title,
+      translatedTitle: translateTitle(title),
+      summary,
+      url: entry.link || "",
+      source: source.name,
+      type: source.category || source.type || "rss",
+      publishedAt: normalizeDate(entry.isoDate || entry.pubDate),
+    };
+  });
+
+  return items.filter((item) => item.url);
+}
+
+async function fetchGithubRepo(repo, failedSources) {
+  const url = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "ai-feed-app/1.0",
+        ...(process.env.GITHUB_TOKEN
+          ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+          : {}),
+      },
+      next: { revalidate: 1800 },
+    });
+
+    if (!response.ok) {
+      failedSources.push(`GitHub: ${repo.label}`);
+      return [];
+    }
+
+    const data = await response.json();
+
+    const title = `${repo.label} no GitHub`;
+    const rawSummary = [
+      data.description || "Repositório sem descrição.",
+      typeof data.stargazers_count === "number" ? `⭐ ${data.stargazers_count}` : "",
+      typeof data.forks_count === "number" ? `🍴 ${data.forks_count}` : "",
+      data.language ? `Linguagem: ${data.language}` : "",
+    ]
+      .filter(Boolean)
+      .join(" • ");
+
+    return [
+      {
+        id: makeId("github", repo.owner, repo.repo),
+        title,
+        translatedTitle: title,
+        summary: cleanSummary(rawSummary),
+        url: data.html_url,
+        source: "GitHub",
+        type: repo.category || "github",
+        publishedAt: normalizeDate(data.updated_at || data.pushed_at || data.created_at),
+      },
+    ];
+  } catch (error) {
+    failedSources.push(`GitHub: ${repo.label}`);
+    return [];
+  }
+}
+
+function sortItems(items = []) {
+  return [...items].sort((a, b) => {
+    const dateA = new Date(a.publishedAt).getTime();
+    const dateB = new Date(b.publishedAt).getTime();
+    return dateB - dateA;
+  });
+}
+
+export async function GET() {
+  const failedSources = [];
+
+  try {
+    const rssResults = await Promise.all(
+      RSS_SOURCES.map((source) => fetchRssSource(source, failedSources))
+    );
+
+    const githubResults = await Promise.all(
+      GITHUB_REPOS.map((repo) => fetchGithubRepo(repo, failedSources))
+    );
+
+    const items = sortItems([...rssResults.flat(), ...githubResults.flat()]).slice(0, 60);
+
+    return Response.json({
+      ok: true,
+      items,
+      failedSources,
+      meta: {
+        total: items.length,
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        ok: false,
+        items: [],
+        failedSources,
+        error: "Falha ao montar o feed.",
+      },
+      { status: 500 }
+    );
+  }
 }
