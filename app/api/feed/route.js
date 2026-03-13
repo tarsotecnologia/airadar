@@ -62,20 +62,28 @@ async function fetchRssFeed(source) {
   }
 
   const xml = await response.text()
-  const items = extractItems(xml)
-    .filter((item) => item.title && item.link)
-    .slice(0, 12)
-    .map((item, index) => ({
-      id: `${source.id}-${index}-${item.link}`,
-      translatedTitle: translateTitle(item.title || ""),
-      url: item.link,
-      summary: item.summary,
-      publishedAt: item.publishedAt,
-      source: source.name,
-      kind: source.kind,
-      type: 'rss'
-    }))
+  const items = (feed.items || []).map((entry) => {
+  const id = entry.id || entry.link || Math.random().toString(36);
 
+  return {
+    id,
+    title: entry.title || "Sem título",
+    translatedTitle: translateTitle(entry.title || ""),
+    summary: cleanSummary(
+      entry.summary ||
+      entry.contentSnippet ||
+      entry.content ||
+      ""
+    ),
+    url: entry.link || entry.url || "",
+    source: source.name,
+    type: source.type,
+    publishedAt:
+      entry.isoDate ||
+      entry.pubDate ||
+      new Date().toISOString(),
+  };
+});
   return items
 }
 
@@ -146,7 +154,7 @@ async function fetchGithubRepo(repoDef) {
     id: `github-${repoDef.id}`,
     title: latestActivity?.title || repo.full_name,
     url: latestActivity?.url || repo.html_url,
-    summary: latestActivity?.summary || repo.description || repoDef.description,
+    summary: latestActivity?.cleanSummary(summary) || repo.description || repoDef.description,
     publishedAt: latestActivity?.publishedAt || parseDate(repo.updated_at),
     source: repo.full_name,
     kind: 'repositório GitHub',
@@ -243,4 +251,26 @@ function translateTitle(title = "") {
   }
 
   return translated;
+}
+
+
+function cleanSummary(text = "") {
+  if (!text) return "Sem resumo disponível.";
+
+  let plain = text
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // remove prefixos comuns do arXiv
+  plain = plain
+    .replace(/arXiv:\d+\.\d+v\d+/gi, "")
+    .replace(/Announce Type:\s*\w+/gi, "")
+    .replace(/Abstract:\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return plain.length > 140
+    ? `${plain.slice(0, 137).trim()}...`
+    : plain;
 }
