@@ -91,16 +91,19 @@ export default function HomePage() {
   return (
     <main className="page-shell">
       <section className="hero">
-        <div>
+        <div className="hero-copy">
           <span className="eyebrow">Radar IA</span>
-          <h1>Seu feed enxuto de LLMs, papers e sinais úteis do GitHub.</h1>
+          <h1>Feed de IA</h1>
           <p>
-            Uma SPA pronta para Vercel, com atualização server-side, cara de webapp e zero cheiro de timeline caótica.
+            Acompanhe LLMs, papers, fontes oficiais e repositórios do GitHub em um painel simples e leve.
           </p>
         </div>
+
         <div className="hero-actions">
           <button className="primary" onClick={loadFeed}>Atualizar agora</button>
-          <a className="ghost" href="/manifest.webmanifest" target="_blank" rel="noreferrer">Manifesto PWA</a>
+          <a className="ghost" href="/manifest.webmanifest" target="_blank" rel="noreferrer">
+            Manifesto PWA
+          </a>
         </div>
       </section>
 
