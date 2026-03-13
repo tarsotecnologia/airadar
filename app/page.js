@@ -1,92 +1,106 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from "react";
 
 const FILTERS = [
-  { id: 'all', label: 'Tudo' },
-  { id: 'rss', label: 'Fontes' },
-  { id: 'github', label: 'GitHub' },
-  { id: 'papers', label: 'Papers' },
-  { id: 'official', label: 'Oficiais' }
-]
+  { label: "Tudo", value: "all" },
+  { label: "Notícias", value: "news" },
+  { label: "Papers", value: "paper" },
+  { label: "Oficiais", value: "official" },
+  { label: "Pesquisa", value: "research" },
+  { label: "GitHub", value: "github" },
+];
 
-function formatDate(iso) {
-  if (!iso) return 'sem data'
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(new Date(iso))
+function formatDate(dateString) {
+  if (!dateString) return "Sem data";
+
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(dateString));
+  } catch {
+    return "Sem data";
+  }
 }
 
-function relativeDate(iso) {
-  if (!iso) return 'sem data'
-  const now = Date.now()
-  const diff = now - new Date(iso).getTime()
-  const minutes = Math.round(diff / 60000)
-  if (minutes < 60) return `${minutes} min atrás`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} h atrás`
-  const days = Math.round(hours / 24)
-  if (days < 30) return `${days} d atrás`
-  const months = Math.round(days / 30)
-  return `${months} mês(es) atrás`
-}
-
-function matchFilter(item, filter) {
-  if (filter === 'all') return true
-  if (filter === 'rss') return item.type === 'rss'
-  if (filter === 'github') return item.type === 'github'
-  if (filter === 'papers') return item.kind === 'papers'
-  if (filter === 'official') return item.kind === 'fonte oficial'
-  return true
-}
-
-export default function HomePage() {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [filter, setFilter] = useState('all')
-  const [query, setQuery] = useState('')
+export default function Page() {
+  const [items, setItems] = useState([]);
+  const [failedSources, setFailedSources] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState("all");
+  const [generatedAt, setGeneratedAt] = useState("");
 
   async function loadFeed() {
     try {
-      setLoading(true)
-      setError('')
-      const response = await fetch('/api/feed', { cache: 'no-store' })
-      if (!response.ok) throw new Error('Não consegui atualizar o feed.')
-      const json = await response.json()
-      setData(json)
-    } catch (err) {
-      setError(err.message || 'Erro inesperado.')
+      setLoading(true);
+
+      const response = await fetch("/api/feed", { cache: "no-store" });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Erro ao carregar feed.");
+      }
+
+      setItems(Array.isArray(data.items) ? data.items : []);
+      setFailedSources(Array.isArray(data.failedSources) ? data.failedSources : []);
+      setGeneratedAt(data?.meta?.generatedAt || "");
+    } catch (error) {
+      console.error(error);
+      setItems([]);
+      setFailedSources(["Falha ao carregar o feed"]);
+      setGeneratedAt("");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadFeed()
-  }, [])
+    loadFeed();
+  }, []);
 
-  const items = useMemo(() => {
-    const list = data?.items || []
-    const term = query.trim().toLowerCase()
-    return list.filter((item) => {
-      const matchesFilter = matchFilter(item, filter)
-      const haystack = `${item.title} ${item.summary} ${item.source}`.toLowerCase()
-      const matchesQuery = term ? haystack.includes(term) : true
-      return matchesFilter && matchesQuery
-    })
-  }, [data, filter, query])
+  const filteredItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return items.filter((item) => {
+      const matchesFilter =
+        activeFilter === "all" ? true : item.type === activeFilter;
+
+      const haystack = [
+        item.title,
+        item.translatedTitle,
+        item.summary,
+        item.source,
+        item.type,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      const matchesQuery = normalizedQuery
+        ? haystack.includes(normalizedQuery)
+        : true;
+
+      return matchesFilter && matchesQuery;
+    });
+  }, [items, query, activeFilter]);
 
   const stats = useMemo(() => {
-    const list = data?.items || []
+    const papers = items.filter((item) => item.type === "paper").length;
+    const news = items.filter((item) => item.type === "news").length;
+    const github = items.filter((item) => item.type === "github").length;
+
     return {
-      total: list.length,
-      papers: list.filter((item) => item.kind === 'papers').length,
-      github: list.filter((item) => item.type === 'github').length,
-      official: list.filter((item) => item.kind === 'fonte oficial').length
-    }
-  }, [data])
+      total: items.length,
+      papers,
+      news,
+      github,
+    };
+  }, [items]);
 
   return (
     <main className="page-shell">
@@ -95,126 +109,128 @@ export default function HomePage() {
           <span className="eyebrow">Radar IA</span>
           <h1>Feed de IA</h1>
           <p>
-            Acompanhe LLMs, papers, fontes oficiais e repositórios do GitHub em um painel simples e leve.
+            Acompanhe LLMs, papers, fontes oficiais e repositórios do GitHub em
+            um painel leve, direto e sem barroquismo visual desnecessário.
           </p>
         </div>
 
         <div className="hero-actions">
-          <button className="primary" onClick={loadFeed}>Atualizar agora</button>
-          <a className="ghost" href="/manifest.webmanifest" target="_blank" rel="noreferrer">
+          <button className="primary" onClick={loadFeed} type="button">
+            {loading ? "Atualizando..." : "Atualizar agora"}
+          </button>
+
+          <a
+            className="ghost"
+            href="/manifest.webmanifest"
+            target="_blank"
+            rel="noreferrer"
+          >
             Manifesto PWA
           </a>
         </div>
       </section>
 
       <section className="stats-grid">
-        <article className="stat-card"><strong>{stats.total}</strong><span>itens no radar</span></article>
-        <article className="stat-card"><strong>{stats.papers}</strong><span>papers</span></article>
-        <article className="stat-card"><strong>{stats.github}</strong><span>sinais GitHub</span></article>
-        <article className="stat-card"><strong>{stats.official}</strong><span>fontes oficiais</span></article>
+        <article className="stat-card">
+          <span>Total</span>
+          <strong>{stats.total}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Papers</span>
+          <strong>{stats.papers}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Notícias</span>
+          <strong>{stats.news}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>GitHub</span>
+          <strong>{stats.github}</strong>
+        </article>
       </section>
 
       <section className="toolbar">
         <div className="filters">
-          {FILTERS.map((item) => (
+          {FILTERS.map((filter) => (
             <button
-              key={item.id}
-              className={filter === item.id ? 'chip active' : 'chip'}
-              onClick={() => setFilter(item.id)}
+              key={filter.value}
+              type="button"
+              className={`chip ${activeFilter === filter.value ? "active" : ""}`}
+              onClick={() => setActiveFilter(filter.value)}
             >
-              {item.label}
+              {filter.label}
             </button>
           ))}
         </div>
-        <input
-          className="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por LLM, benchmark, repo, laboratório..."
-        />
-      </section>
 
-      <section className="sources-grid">
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Fontes monitoradas</h2>
-            <span>{data?.sources?.length || 0}</span>
-          </div>
-          <ul className="mini-list">
-            {(data?.sources || []).map((source) => (
-              <li key={source.id}>
-                <strong>{source.name}</strong>
-                <span>{source.kind}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Repos no radar</h2>
-            <span>{data?.githubRepos?.length || 0}</span>
-          </div>
-          <ul className="mini-list">
-            {(data?.githubRepos || []).map((repo) => (
-              <li key={repo.id}>
-                <strong>{repo.name}</strong>
-                <span>{repo.description}</span>
-              </li>
-            ))}
-          </ul>
+        <div>
+          <input
+            className="search"
+            type="text"
+            placeholder="Buscar por título, fonte ou resumo..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
       </section>
 
-      {error ? <div className="empty-state error">{error}</div> : null}
-      {loading ? <div className="empty-state">Carregando o radar…</div> : null}
-      {!loading && !error && data?.errors?.length ? (
+      {failedSources.length > 0 && (
         <div className="warning-box">
-          Algumas fontes falharam nesta rodada: {data.errors.join(' · ')}
+          Algumas fontes falharam nesta rodada: {failedSources.join(", ")}
         </div>
-      ) : null}
+      )}
 
-      <section className="feed-grid">
-        {items.map((item) => (
-          <article className="feed-card" key={item.id}>
-            <div className="card-top">
-              <span className="badge">{item.kind}</span>
-              <span className="muted">{relativeDate(item.publishedAt)}</span>
-            </div>
-            <h3 title={item.translatedTitle || item.title}>
-              {item.translatedTitle || item.title}
-            </h3>
-            <p className="summary clamp-2">
-            {item.summary}
-          </p>
-            <div className="card-meta">
-              <div>
-                <strong>{item.source}</strong>
-                <span>{formatDate(item.publishedAt)}</span>
+      {loading ? (
+        <div className="empty-state">Carregando o feed...</div>
+      ) : filteredItems.length === 0 ? (
+        <div className="empty-state">
+          Nada encontrado com os filtros atuais. O feed ficou exigente.
+        </div>
+      ) : (
+        <section className="feed-grid">
+          {filteredItems.map((item) => (
+            <article key={item.id} className="feed-card">
+              <div className="card-top">
+                <span className="badge">{item.source}</span>
+                <span className="muted">{formatDate(item.publishedAt)}</span>
               </div>
-              {item.type === 'github' && item.stars ? (
-                <div>
-                  <strong>{Intl.NumberFormat('pt-BR').format(item.stars)}</strong>
-                  <span>stars</span>
-                </div>
-              ) : null}
-            </div>
-            <div className="card-actions">
-              <a href={item.url} target="_blank" rel="noreferrer">Abrir item</a>
-              {item.repoUrl ? <a href={item.repoUrl} target="_blank" rel="noreferrer">Ver repositório</a> : null}
-            </div>
-          </article>
-        ))}
-      </section>
 
-      {!loading && !error && items.length === 0 ? (
-        <div className="empty-state">Nada bateu com esse filtro. Seu radar está seletivo hoje.</div>
-      ) : null}
+              <div>
+                <h3 title={item.translatedTitle || item.title}>
+                  {item.translatedTitle || item.title}
+                </h3>
+              </div>
+
+              <p className="summary clamp-2">{item.summary}</p>
+
+              <div className="card-meta">
+                <div>
+                  <span>Categoria</span>
+                  <strong>{item.type}</strong>
+                </div>
+              </div>
+
+              <div className="card-actions">
+                <a href={item.url} target="_blank" rel="noreferrer">
+                  Abrir fonte
+                </a>
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
 
       <footer className="footer">
-        <span>Atualizado em {formatDate(data?.updatedAt)}</span>
-        <span>Pronto para Vercel e fácil de evoluir para PWA completo.</span>
+        <span>
+          {generatedAt
+            ? `Última atualização: ${formatDate(generatedAt)}`
+            : "Sem atualização registrada"}
+        </span>
+        <span>{filteredItems.length} itens visíveis</span>
       </footer>
     </main>
-  )
+  );
 }
