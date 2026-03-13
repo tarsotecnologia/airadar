@@ -1,0 +1,17 @@
+{
+  "name": "Radar IA",
+  "short_name": "Radar IA",
+  "description": "Feed compacto para acompanhar IA, LLMs, papers e repositórios.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#0b1020",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
